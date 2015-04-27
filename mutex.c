@@ -178,10 +178,8 @@ int set_filename(char fname[1000][256], char *dname)
 int main(int argc, char *argv[])
 {
   pthread_t tid[THREAD_NUM];
-  int i;
+  int i, j;
   int error;
-  char rfname[256];
-  char wfname[256];
   const char *in = argv[1];
   const char *ou = argv[2];
   DIR *dp;
@@ -194,64 +192,45 @@ int main(int argc, char *argv[])
   }
 
   long fnum = get_file_num(in);
+  char rfname[fnum][256];
+  char wfname[fnum][256];
+
   dp = opendir(in);
+  while ((dir = readdir(dp)))
 
-  while ((dir = readdir(dp)) != 0) {
-    if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0) {
-		strcpy(rfname, in);
-		strcat(rfname, "/");
-		strcat(rfname, dir->d_name);
-		strcpy(wfname, ou);
-		strcat(wfname, "/");
-		strcat(wfname, dir->d_name);
-
-		rfp = fopen(rfname, "r");
-		if (!rfp) {
-			perror("fopen");
-			exit(1);
-		}
-		wfp = fopen(wfname, "w");
-		if (!wfp) {
-			perror("fopen");
-			exit(1);
-		}
-
-		if(strcmp(argv[3], "ENC") == 0) {
-			do_crypt(rfp, wfp, ENC);
-		} else if(strcmp(argv[3], "DEC") == 0) {
-			do_crypt(rfp, wfp, DEC);
-		}
-
-		fclose(rfp);
-		fclose(wfp);
-	}
-  }
-
-  closedir(dp);
-  /*
   init_locks();
-  for(i = 0; i < argc - 1; i++) {
-    strcpy(f.inf, in);
-	strcat(f.inf, "/");
-	strcat(f.inf, fname[i]);
-    strcpy(f.ouf, ou);
-	strcat(f.ouf, "/");
-	strcat(f.ouf, fname[i]);
-    error = pthread_create(&tid[i],
-                           NULL,
-                           do_crypto_thread,
-                           (void *)f);
-    if(error)
-      fprintf(stderr, "Couldn't run thread number %d, errno %d\n", i, error);
+
+  for (i = 0; i < abs(fnum / THREAD_NUM); i++) {
+	  for(j = 0; j < THREAD_NUM; j++) {
+		  error = pthread_create(&tid[j],
+				  NULL,
+				  do_crypto_thread,
+				  (void *)f);
+		  if(error)
+			  fprintf(stderr, "Couldn't run thread number %d, errno %d\n", j, error);
+	  }
+
+	  for(j = 0; j < abs(fnum / THREAD_NUM); j++) {
+		  error = pthread_join(tid[j], NULL);
+		  fprintf(stderr, "Thread %d terminated\n", j);
+	  }
   }
 
-  for(i = 0; i < argc - 1; i++) {
-    error = pthread_join(tid[i], NULL);
-    fprintf(stderr, "Thread %d terminated\n", i);
+  for(j = 0; j < fnum % THREAD_NUM; j++) {
+	  error = pthread_create(&tid[j],
+			  NULL,
+			  do_crypto_thread,
+			  (void *)f);
+	  if(error)
+		  fprintf(stderr, "Couldn't run thread number %d, errno %d\n", j, error);
+  }
+
+  for(j = 0; j < fnum % THREAD_NUM; j++) {
+	  error = pthread_join(tid[j], NULL);
+	  fprintf(stderr, "Thread %d terminated\n", j);
   }
 
   clear_locks();
-  */
 
   return 0;
 }
