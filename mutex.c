@@ -1,11 +1,23 @@
 #include <stdio.h>
+#include <limits.h>
+#include <string.h>
+#include <errno.h>
+#include <dirent.h>
 #include <pthread.h>
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 
 #define THREAD_NUM 4
+#define BUFSIZE 1024
+#define ENC 1
+#define DEC 0
 
-/* we have this global to let the callback get easy access to it */
 static pthread_mutex_t *lockarray;
+
+struct FNAMES{
+	char inf[_POSIX_PATH_MAX];
+	char ouf[_POSIX_PATH_MAX];
+};
 
 static void lock_callback(int mode, int type, char *file, int line)
 {
@@ -46,10 +58,121 @@ static void clear_locks(void)
   OPENSSL_free(lockarray);
 }
 
-static void *do_crypto(void *file)
+int do_crypt(FILE *in, FILE *out, int do_encrypt)
+{
+	/* Allow enough space in output buffer for additional block */
+	unsigned char inbuf[BUFSIZE], outbuf[BUFSIZE + EVP_MAX_BLOCK_LENGTH];
+	int inlen, outlen;
+	EVP_CIPHER_CTX ctx;
+	/* Bogus key and IV: we'd normally set these from
+	 * another source.
+	 */
+	unsigned char key[] = "0123456789abcdeF";
+	unsigned char iv[] = "1234567887654321";
+
+	/* Don't set key or IV right away; we want to check lengths */
+	EVP_CIPHER_CTX_init(&ctx);
+	EVP_CipherInit_ex(&ctx, EVP_aes_128_cbc(), NULL, NULL, NULL,
+			do_encrypt);
+	OPENSSL_assert(EVP_CIPHER_CTX_key_length(&ctx) == 16);
+	OPENSSL_assert(EVP_CIPHER_CTX_iv_length(&ctx) == 16);
+
+	/* Now we can set key and IV */
+	EVP_CipherInit_ex(&ctx, NULL, NULL, key, iv, do_encrypt);
+
+	for(;;) {
+		inlen = fread(inbuf, 1, 1024, in);
+		if(inlen <= 0) break;
+		if(!EVP_CipherUpdate(&ctx, outbuf, &outlen, inbuf, inlen)) {
+			/* Error */
+			EVP_CIPHER_CTX_cleanup(&ctx);
+			return 0;
+		}
+		fwrite(outbuf, 1, outlen, out);
+	}
+	if(!EVP_CipherFinal_ex(&ctx, outbuf, &outlen)) {
+		/* Error */
+		EVP_CIPHER_CTX_cleanup(&ctx);
+		return 0;
+	}
+	fwrite(outbuf, 1, outlen, out);
+
+	EVP_CIPHER_CTX_cleanup(&ctx);
+	return 1;
+}
+
+static void *do_crypto_thread(void *arg)
 {
 	/* TODO: implement cryption */
-    printf("filename: %s\n", (char *)file);
+    //printf("filenames: %s %s\n", f->inf, f->ouf);
+
+}
+
+static long get_file_num(const char *dname)
+{
+	long count =  0;
+	DIR *dp;
+	struct dirent *dir;
+
+	dp = opendir(dname);
+	if (!dp) {
+		perror("opendir:");
+		return -1;
+	}
+
+	while ((dir = readdir(dp)) != NULL) {
+		if (strcmp(dir->d_name, ".") != 0 &&  strcmp(dir->d_name, "..") != 0)
+			count++;
+	}
+
+	closedir(dp);
+
+	return count;
+}
+
+static long get_file_size(const char *fname)
+{
+	FILE *fp;
+	long fsize;
+	fp = fopen(fname, "r");
+	if (!fp) {
+		perror("fopen:");
+		return -1;
+	}
+
+	if (fseek(fp, 0, SEEK_END) == -1) {
+		perror("fseek:");
+		return -1;
+	}
+
+	if ((fsize = ftell(fp)) == -1) {
+		perror("ftell:");
+		return -1;
+	}
+
+	fclose(fp);
+	return fsize;
+}
+
+int set_filename(char fname[1000][256], char *dname)
+{
+	DIR *dp;
+	int i;
+	struct dirent *dir;
+
+	dp = opendir(dname);
+	if (!dp) {
+		perror("opendir:");
+		return -1;
+	}
+
+	while ((dir = readdir(dp)) != NULL) {
+		if (strcmp(dir->d_name, ".") != 0 &&  strcmp(dir->d_name, "..") != 0)
+			strcpy(fname[i++], dir->d_name);
+	}
+
+	closedir(dp);
+	return 0;
 }
 
 int main(int argc, char *argv[])
@@ -57,14 +180,67 @@ int main(int argc, char *argv[])
   pthread_t tid[THREAD_NUM];
   int i;
   int error;
+  char rfname[256];
+  char wfname[256];
+  const char *in = argv[1];
+  const char *ou = argv[2];
+  DIR *dp;
+  FILE *rfp, *wfp;
+  struct dirent *dir;
 
+  if (argc < 2) {
+	  fprintf(stderr, "Usage: %s [src] [dist] [ENC|DEC]\n", argv[0]);
+	  exit(1);
+  }
+
+  long fnum = get_file_num(in);
+  dp = opendir(in);
+
+  while ((dir = readdir(dp)) != 0) {
+    if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0) {
+		strcpy(rfname, in);
+		strcat(rfname, "/");
+		strcat(rfname, dir->d_name);
+		strcpy(wfname, ou);
+		strcat(wfname, "/");
+		strcat(wfname, dir->d_name);
+
+		rfp = fopen(rfname, "r");
+		if (!rfp) {
+			perror("fopen");
+			exit(1);
+		}
+		wfp = fopen(wfname, "w");
+		if (!wfp) {
+			perror("fopen");
+			exit(1);
+		}
+
+		if(strcmp(argv[3], "ENC") == 0) {
+			do_crypt(rfp, wfp, ENC);
+		} else if(strcmp(argv[3], "DEC") == 0) {
+			do_crypt(rfp, wfp, DEC);
+		}
+
+		fclose(rfp);
+		fclose(wfp);
+	}
+  }
+
+  closedir(dp);
+  /*
   init_locks();
-
   for(i = 0; i < argc - 1; i++) {
+    strcpy(f.inf, in);
+	strcat(f.inf, "/");
+	strcat(f.inf, fname[i]);
+    strcpy(f.ouf, ou);
+	strcat(f.ouf, "/");
+	strcat(f.ouf, fname[i]);
     error = pthread_create(&tid[i],
                            NULL,
-                           do_crypto,
-                           (void *)file[i]);
+                           do_crypto_thread,
+                           (void *)f);
     if(error)
       fprintf(stderr, "Couldn't run thread number %d, errno %d\n", i, error);
   }
@@ -75,6 +251,7 @@ int main(int argc, char *argv[])
   }
 
   clear_locks();
+  */
 
   return 0;
 }
