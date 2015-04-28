@@ -7,16 +7,17 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 
-#define THREAD_NUM 4
+#define THREAD_NUM 2
 #define BUFSIZE 1024
 #define ENC 1
 #define DEC 0
 
 static pthread_mutex_t *lockarray;
 
-struct FNAMES{
-	char inf[_POSIX_PATH_MAX];
-	char ouf[_POSIX_PATH_MAX];
+struct ARGS{
+	char rfname[256];
+	char wfname[256];
+	int mode;
 };
 
 static void lock_callback(int mode, int type, char *file, int line)
@@ -101,11 +102,29 @@ int do_crypt(FILE *in, FILE *out, int do_encrypt)
 	return 1;
 }
 
-static void *do_crypto_thread(void *arg)
+static void *do_crypt_thread(void *arg)
 {
 	/* TODO: implement cryption */
-    //printf("filenames: %s %s\n", f->inf, f->ouf);
+	printf("in thread %lu\n", thread_id());
+	struct ARGS *args = (struct ARGS *) arg;
+	FILE *rfp, *wfp;
+	rfp = fopen(args->rfname, "r");
+	if (!rfp) {
+		perror("fopen");
+		exit(1);
+	}
+	wfp = fopen(args->wfname, "w");
+	if (!wfp) {
+		perror("fopen");
+		exit(1);
+	}
 
+	do_crypt(rfp, wfp, args->mode);
+
+	printf("end: do_crypt in thread %lu\n", thread_id());
+	fclose(rfp);
+	fclose(wfp);
+	return 0;
 }
 
 static long get_file_num(const char *dname)
@@ -130,60 +149,16 @@ static long get_file_num(const char *dname)
 	return count;
 }
 
-static long get_file_size(const char *fname)
-{
-	FILE *fp;
-	long fsize;
-	fp = fopen(fname, "r");
-	if (!fp) {
-		perror("fopen:");
-		return -1;
-	}
-
-	if (fseek(fp, 0, SEEK_END) == -1) {
-		perror("fseek:");
-		return -1;
-	}
-
-	if ((fsize = ftell(fp)) == -1) {
-		perror("ftell:");
-		return -1;
-	}
-
-	fclose(fp);
-	return fsize;
-}
-
-int set_filename(char fname[1000][256], char *dname)
-{
-	DIR *dp;
-	int i;
-	struct dirent *dir;
-
-	dp = opendir(dname);
-	if (!dp) {
-		perror("opendir:");
-		return -1;
-	}
-
-	while ((dir = readdir(dp)) != NULL) {
-		if (strcmp(dir->d_name, ".") != 0 &&  strcmp(dir->d_name, "..") != 0)
-			strcpy(fname[i++], dir->d_name);
-	}
-
-	closedir(dp);
-	return 0;
-}
-
 int main(int argc, char *argv[])
 {
   pthread_t tid[THREAD_NUM];
   int i, j;
+  int mode_flag = ENC;
+  int argi;
   int error;
   const char *in = argv[1];
   const char *ou = argv[2];
   DIR *dp;
-  FILE *rfp, *wfp;
   struct dirent *dir;
 
   if (argc < 2) {
@@ -192,25 +167,51 @@ int main(int argc, char *argv[])
   }
 
   long fnum = get_file_num(in);
-  char rfname[fnum][256];
-  char wfname[fnum][256];
+  struct ARGS args[fnum];
+
+  if (argc == 4) {
+	  if (strcmp(argv[3], "ENC") == 0) {
+		  mode_flag = ENC;
+	  } else if (strcmp(argv[3], "DEC") == 0){
+		  mode_flag = DEC;
+	  }
+  }
 
   dp = opendir(in);
-  while ((dir = readdir(dp)))
+  i = 0;
+  while ((dir = readdir(dp)) != NULL) {
+	if (strcmp(dir->d_name, ".") != 0 &&
+			strcmp(dir->d_name, "..") != 0) {
+		strcpy(args[i].rfname, in);
+		strcat(args[i].rfname, "/");
+		strcat(args[i].rfname, dir->d_name);
+		strcpy(args[i].wfname, ou);
+		strcat(args[i].wfname, "/");
+		strcat(args[i].wfname, dir->d_name);
+		args[i].mode = mode_flag;
+		i++;
+	}
+  }
 
   init_locks();
 
-  for (i = 0; i < abs(fnum / THREAD_NUM); i++) {
+  printf("crypto_num_locks = %d\n", CRYPTO_num_locks());
+  printf("fnum = %ld\n", fnum);
+  printf("THREAD_NUM = %d\n", THREAD_NUM);
+  printf("fnum / THREAD_NUM = %ld\n", (long)(fnum / THREAD_NUM));
+
+  argi = 0;
+  for (i = 0; i < (long)(fnum / THREAD_NUM); i++) {
 	  for(j = 0; j < THREAD_NUM; j++) {
 		  error = pthread_create(&tid[j],
 				  NULL,
-				  do_crypto_thread,
-				  (void *)f);
+				  do_crypt_thread,
+				  (void *)&args[argi++]);
 		  if(error)
 			  fprintf(stderr, "Couldn't run thread number %d, errno %d\n", j, error);
 	  }
 
-	  for(j = 0; j < abs(fnum / THREAD_NUM); j++) {
+	  for(j = 0; j < THREAD_NUM; j++) {
 		  error = pthread_join(tid[j], NULL);
 		  fprintf(stderr, "Thread %d terminated\n", j);
 	  }
@@ -219,8 +220,8 @@ int main(int argc, char *argv[])
   for(j = 0; j < fnum % THREAD_NUM; j++) {
 	  error = pthread_create(&tid[j],
 			  NULL,
-			  do_crypto_thread,
-			  (void *)f);
+			  do_crypt_thread,
+			  (void *)&args[argi++]);
 	  if(error)
 		  fprintf(stderr, "Couldn't run thread number %d, errno %d\n", j, error);
   }
