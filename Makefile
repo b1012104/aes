@@ -3,6 +3,7 @@ LIB = -lpthread -lcrypto
 OBJS = mutex.o
 TEST_DIR_CONTENT = enc/* dec/*
 
+.PHONY: all
 all: $(PROGRAM)
 
 $(PROGRAM): $(OBJS)
