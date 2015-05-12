@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
 #include <limits.h>
 #include <string.h>
 #include <errno.h>
@@ -7,7 +9,6 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 
-#define THREAD_NUM 2
 #define BUFSIZE 1024
 #define ENC 1
 #define DEC 0
@@ -139,15 +140,29 @@ static long get_file_num(const char *dname)
     return count;
 }
 
+static void show_usage(char *program)
+{
+    fprintf(stderr, "Usage: %s [options] [src] [dist] [ENC|DEC]\n", program);
+
+}
+
+static struct option longopts[] = {
+    {"thread", required_argument, NULL, 't'},
+    {"help",   no_argument,        NULL, 'h'},
+    {0, 0, 0, 0}
+};
+
 int main(int argc, char *argv[])
 {
-    pthread_t tid[THREAD_NUM];
     int i, j;
-    int mode_flag = ENC;
-    int argi;
+    int mode_flag = ENC; /* default ENC flag */
     int error;
-    const char *in = argv[1];
-    const char *ou = argv[2];
+    int opt;
+    long fnum;
+    int thread_num = 1; /* default 1 thread */
+    int argi;
+    const char *in;
+    const char *ou;
     DIR *dp;
     struct dirent *dir;
 
@@ -156,13 +171,38 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    long fnum = get_file_num(in);
+    while ((opt = getopt_long(argc, argv, "t:h", longopts, NULL)) != -1) {
+        switch (opt) {
+            case 't':
+                thread_num = atoi(optarg);
+                if (thread_num <= 0) {
+                    fprintf(stderr, "invalid option argument\n");
+                    exit(1);
+                }
+                break;
+            case 'h':
+                show_usage(argv[0]);
+                exit(0);
+                break;
+            case '?':
+                show_usage(argv[0]);
+                fprintf(stderr, "bad option\n");
+                exit(1);
+                break;
+        }
+    }
+
+    in = argv[optind];
+    ou = argv[optind + 1];
+
+    fnum = get_file_num(in);
+    pthread_t tid[thread_num];
     struct ARGS args[fnum];
 
-    if (argc == 4) {
-        if (strcmp(argv[3], "ENC") == 0) {
+    if (argv[optind + 2]) {
+        if (strcmp(argv[optind + 2], "ENC") == 0) {
             mode_flag = ENC;
-        } else if (strcmp(argv[3], "DEC") == 0){
+        } else if (strcmp(argv[optind + 2], "DEC") == 0){
             mode_flag = DEC;
         }
     }
@@ -186,16 +226,15 @@ int main(int argc, char *argv[])
     init_locks();
 
 #ifdef DEBUG
-    printf("crypto_num_locks = %d\n", CRYPTO_num_locks());
-    printf("fnum = %ld\n", fnum);
-    printf("THREAD_NUM = %d\n", THREAD_NUM);
-    printf("fnum / THREAD_NUM = %ld\n", (long)(fnum / THREAD_NUM));
+    printf("thread num      : %d\n", thread_num);
+    printf("file num        : %ld\n", fnum);
+    printf("crypto_num_locks: %d\n", CRYPTO_num_locks());
 #endif
 
     /* start threads */
     argi = 0;
-    for (i = 0; i < (long)(fnum / THREAD_NUM); i++) {
-        for(j = 0; j < THREAD_NUM; j++) {
+    for (i = 0; i < (long)(fnum / thread_num); i++) {
+        for(j = 0; j < thread_num; j++) {
             error = pthread_create(&tid[j],
                     NULL,
                     do_crypt_thread,
@@ -204,14 +243,16 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "Couldn't run thread number %d, errno %d\n", j, error);
         }
 
-        for(j = 0; j < THREAD_NUM; j++) {
+        for(j = 0; j < thread_num; j++) {
             error = pthread_join(tid[j], NULL);
+#ifdef DEBUG
             fprintf(stderr, "Thread %d terminated\n", j);
+#endif
         }
     }
 
     /* run remaining threads */
-    for(j = 0; j < fnum % THREAD_NUM; j++) {
+    for(j = 0; j < fnum % thread_num; j++) {
         error = pthread_create(&tid[j],
                 NULL,
                 do_crypt_thread,
@@ -220,9 +261,11 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Couldn't run thread number %d, errno %d\n", j, error);
     }
 
-    for(j = 0; j < fnum % THREAD_NUM; j++) {
+    for(j = 0; j < fnum % thread_num; j++) {
         error = pthread_join(tid[j], NULL);
+#ifdef DEBUG
         fprintf(stderr, "Thread %d terminated\n", j);
+#endif
     }
     /* threads end here */
 
