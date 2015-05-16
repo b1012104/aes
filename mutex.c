@@ -12,13 +12,13 @@
 #define BUFSIZE 1024
 #define ENC 1
 #define DEC 0
-#define MAX_FILE_LENGTH 256
+#define MAX_FILENAME_LEN 256
 
 static pthread_mutex_t *mutex_buf;
 
 struct ARGS{
-    char rfname[MAX_FILE_LENGTH];
-    char wfname[MAX_FILE_LENGTH];
+    char rfname[MAX_FILENAME_LEN];
+    char wfname[MAX_FILENAME_LEN];
     int mode;
 };
 
