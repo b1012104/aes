@@ -143,7 +143,6 @@ static long get_file_num(const char *dname)
 static void show_usage(char *program)
 {
     fprintf(stderr, "Usage: %s [options] [src] [dist] [ENC|DEC]\n", program);
-
 }
 
 static struct option longopts[] = {
@@ -195,8 +194,8 @@ int main(int argc, char *argv[])
     in = argv[optind];
     ou = argv[optind + 1];
 
-    fnum = get_file_num(in);
     pthread_t tid[thread_num];
+    fnum = get_file_num(in);
     struct ARGS args[fnum];
 
     if (argv[optind + 2]) {
