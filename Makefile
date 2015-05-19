@@ -15,3 +15,7 @@ $(OBJS): %.o: %.c
 .PHONY: clean
 clean:
 	$(RM) $(OBJS) $(PROGRAM) $(TEST_DIR_CONTENT)
+
+.PHONY: cleandir
+cleandir:
+	$(RM) $(TEST_DIR_CONTENT)
