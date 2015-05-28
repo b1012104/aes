@@ -199,7 +199,7 @@ int main(int argc, char *argv[])
     in = argv[optind];
     ou = argv[optind + 1];
 
-    pthread_t tid[thread_num];
+    pthread_t threads[thread_num];
     fnum = get_file_num(in);
     struct ARGS args[fnum];
 
@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
         thread_num = fnum;
     for (i = 0; i < thread_num; i++) {
         args[i].thread_count = i;
-        error = pthread_create(&tid[i],
+        error = pthread_create(&threads[i],
                 NULL,
                 do_crypt_thread,
                 (void *)&args[i]);
@@ -249,7 +249,7 @@ int main(int argc, char *argv[])
     }
 
     for(i = 0; i < thread_num; i++) {
-        error = pthread_join(tid[i], NULL);
+        error = pthread_join(threads[i], NULL);
 #ifdef DEBUG
         fprintf(stderr, "Thread %d terminated\n", i);
 #endif
