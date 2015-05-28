@@ -161,7 +161,7 @@ static struct option longopts[] = {
 
 int main(int argc, char *argv[])
 {
-    int i, j;
+    int i;
     int mode_flag = ENC; /* default ENC flag */
     int error;
     int opt;
