@@ -15,11 +15,14 @@
 #define MAX_FILENAME_LEN 256
 
 static pthread_mutex_t *mutex_buf;
+int thread_num = 1; /* default 1 thread */
+long fnum;
 
 struct ARGS{
     char rfname[MAX_FILENAME_LEN];
     char wfname[MAX_FILENAME_LEN];
     int mode;
+    int thread_count;
 };
 
 static void lock_callback(int mode, int type, char *file, int line)
@@ -96,27 +99,32 @@ static int do_crypt(FILE *in, FILE *out, int do_encrypt)
 
 static void *do_crypt_thread(void *arg)
 {
-    struct ARGS *args = (struct ARGS *) arg;
+    struct ARGS *args = (struct ARGS *)arg;
     FILE *rfp, *wfp;
-    rfp = fopen(args->rfname, "r");
-    if (!rfp) {
-        perror("fopen");
-        pthread_exit(NULL);
-    }
-    wfp = fopen(args->wfname, "w");
-    if (!wfp) {
-        perror("fopen");
-        pthread_exit(NULL);
-    }
+    int i;
 
-    if(do_crypt(rfp, wfp, args->mode)) {
-        printf("failed encryption\n");
-        pthread_exit(NULL);
-    }
+    for (i = args->thread_count; i < fnum; i += thread_num) {
+        rfp = fopen(args->rfname, "r");
+        if (!rfp) {
+            perror("fopen");
+            pthread_exit(NULL);
+        }
+        wfp = fopen(args->wfname, "w");
+        if (!wfp) {
+            perror("fopen");
+            pthread_exit(NULL);
+        }
 
-    fclose(rfp);
-    fclose(wfp);
-    return 0;
+        if(do_crypt(rfp, wfp, args->mode)) {
+            printf("failed encryption\n");
+            pthread_exit(NULL);
+        }
+
+        fclose(rfp);
+        fclose(wfp);
+        args += thread_num;
+    }
+    pthread_exit(NULL);
 }
 
 static long get_file_num(const char *dname)
@@ -157,8 +165,6 @@ int main(int argc, char *argv[])
     int mode_flag = ENC; /* default ENC flag */
     int error;
     int opt;
-    long fnum;
-    int thread_num = 1; /* default 1 thread */
     int argi;
     const char *in;
     const char *ou;
@@ -166,7 +172,7 @@ int main(int argc, char *argv[])
     struct dirent *dir;
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s [src] [dist] [ENC|DEC]\n", argv[0]);
+        show_usage(argv[0]);
         exit(1);
     }
 
@@ -185,7 +191,6 @@ int main(int argc, char *argv[])
                 break;
             case '?':
                 show_usage(argv[0]);
-                fprintf(stderr, "bad option\n");
                 exit(1);
                 break;
         }
@@ -231,39 +236,22 @@ int main(int argc, char *argv[])
 #endif
 
     /* start threads */
-    argi = 0;
-    for (i = 0; i < (long)(fnum / thread_num); i++) {
-        for(j = 0; j < thread_num; j++) {
-            error = pthread_create(&tid[j],
-                    NULL,
-                    do_crypt_thread,
-                    (void *)&args[argi++]);
-            if(error)
-                fprintf(stderr, "Couldn't run thread number %d, errno %d\n", j, error);
-        }
-
-        for(j = 0; j < thread_num; j++) {
-            error = pthread_join(tid[j], NULL);
-#ifdef DEBUG
-            fprintf(stderr, "Thread %d terminated\n", j);
-#endif
-        }
-    }
-
-    /* run remaining threads */
-    for(j = 0; j < fnum % thread_num; j++) {
-        error = pthread_create(&tid[j],
+    if (thread_num > fnum)
+        thread_num = fnum;
+    for (i = 0; i < thread_num; i++) {
+        args[i].thread_count = i;
+        error = pthread_create(&tid[i],
                 NULL,
                 do_crypt_thread,
-                (void *)&args[argi++]);
+                (void *)&args[i]);
         if(error)
-            fprintf(stderr, "Couldn't run thread number %d, errno %d\n", j, error);
+            fprintf(stderr, "Couldn't run thread number %d, errno %d\n", i, error);
     }
 
-    for(j = 0; j < fnum % thread_num; j++) {
-        error = pthread_join(tid[j], NULL);
+    for(i = 0; i < thread_num; i++) {
+        error = pthread_join(tid[i], NULL);
 #ifdef DEBUG
-        fprintf(stderr, "Thread %d terminated\n", j);
+        fprintf(stderr, "Thread %d terminated\n", i);
 #endif
     }
     /* threads end here */
